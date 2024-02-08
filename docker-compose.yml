@@ -7,7 +7,7 @@ services:
     environment:
       - DATABASE_URL=db://db:db@localhost:5432/mydatabase
     ports:
-      - 3001:3000
+      - 8081:8080
     depends_on:
       - db
     deploy:
@@ -19,7 +19,7 @@ services:
   api2: 
     <<: *api
     ports:
-      - 3002:3000
+      - 8082:8080
     container_name: api2
 
   db:

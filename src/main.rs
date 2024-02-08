@@ -2,9 +2,9 @@ use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
 
 fn main() {
-    let listener = TcpListener::bind("127.0.0.1:3000").expect("Failed to bind");
+    let listener = TcpListener::bind("0.0.0.0:8080").expect("Failed to bind");
 
-    println!("Server listening on port 3000");
+    println!("Server listening on port 8080");
 
     for stream in listener.incoming() {
         match stream {
