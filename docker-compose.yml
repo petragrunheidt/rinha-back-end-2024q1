@@ -2,19 +2,22 @@ version: '3.9'
 
 services:
   api1: &api
-    build: .
+    # build: .
+    image: rust:latest
     container_name: api1
-    environment:
-      - DATABASE_URL=db://db:db@localhost:5432/mydatabase
+    volumes:
+      - .:/usr/src/rinha
     ports:
       - 8081:8080
     depends_on:
-      - db
-    deploy:
-      resources:
-        limits:
-          cpus: '0.3'
-          memory: '150MB'
+      - rinha-db
+    working_dir: /usr/src/rinha
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '0.3'
+    #       memory: '150MB'
+    command: cargo run
 
   api2: 
     <<: *api
@@ -22,11 +25,13 @@ services:
       - 8082:8080
     container_name: api2
 
-  db:
+  rinha-db:
     image: postgres
-    container_name: db
+    container_name: rinha-db
     environment:
-      - POSTGRES_PASSWORD=postgres
+      POSTGRES_USER: rinha-db
+      POSTGRES_PASSWORD: rinha-db
+      POSTGRES_DB: rinha-db
     ports:
       - 5432:5432
     volumes:

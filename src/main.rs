@@ -1,7 +1,13 @@
 use std::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
+use std::io::Read;
 
+mod pg_pool;
+use pg_pool::create_pg_pool;
+
+mod controllers;
+use controllers::{handle_extract_request, handle_transaction_request};
 fn main() {
+    // 127.0.0.1 0.0.0.0
     let listener = TcpListener::bind("0.0.0.0:8080").expect("Failed to bind");
 
     println!("Server listening on port 8080");
@@ -23,34 +29,26 @@ fn handle_connection(mut stream: TcpStream) {
     stream.read(&mut buffer).expect("Failed to read request");
 
     println!("Received request: {}", String::from_utf8_lossy(&buffer));
+    let pg_conn = create_pg_pool();
 
     let request_str = String::from_utf8_lossy(&buffer);
     let http_method = request_str.split_whitespace().next();
     let path = request_str.split_whitespace().nth(1).unwrap_or("/");
+    let split_path: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-    match (http_method, path) {
-      (Some("GET"), "/hello") => {
-          handle_hello_request(&mut stream);
-      }
-      (Some("POST"), "/world") => {
-          handle_world_request(&mut stream);
-      }
-      _ => {
-          let response = "HTTP/1.1 405";
-          stream.write_all(response.as_bytes()).expect("Failed to write response");
-          stream.flush().expect("Failed to flush");
+    if split_path[0] == "clientes" {
+      let client_id = split_path[1];
+      let sub_path = split_path[2];
+
+      match (http_method, sub_path) {
+        (Some("GET"), "extrato") => {
+            handle_extract_request(&mut stream, pg_conn, client_id);
+        }
+        (Some("POST"), "transacoes") => {
+            handle_transaction_request(&mut stream, pg_conn, client_id);
+        }
+        _ => {}
       }
     }
   }
 
-fn handle_hello_request(stream: &mut TcpStream) {
-  let response = "HTTP/1.1 200\r\nContent-Type: text/plain\r\n\r\nHihi, World!";
-  stream.write_all(response.as_bytes()).expect("Failed to write response");
-  stream.flush().expect("Failed to flush");
-}
-
-fn handle_world_request(stream: &mut TcpStream) {
-  let response = "HTTP/1.1 200\r\nContent-Type: text/plain\r\n\r\nByebye, World!";
-  stream.write_all(response.as_bytes()).expect("Failed to write response");
-  stream.flush().expect("Failed to flush");
-}
