@@ -34,52 +34,6 @@ fn get_last_10_transactions_query(id: &str) -> String {
 }
 
 
-
-pub fn handle_extract_request(stream: &mut TcpStream, pg_pool: Pool<PostgresConnectionManager<NoTls>>, client_id: &str) {
-    let pool = pg_pool.clone();
-    let id_clone: String = client_id.to_string();
-
-    let response = Arc::new(Mutex::new(Response {
-      status: String::new(),
-      body: String::new(),
-    }));
-    let response_clone = Arc::clone(&response);
-
-    thread::spawn(move || {
-      let mut client = pool.get().unwrap();
-      
-      let balance_result = client.query_one(&get_balance_query(&id_clone), &[]);
-
-      match balance_result {
-          Ok(row) => {
-            let limit: i32 = row.get(0);
-            let balance: i32 = row.get(1);
-            let account_balance = format!(
-              r#"{{ "total": {}, "data_extrato": {}, "limite": {} }}"#,
-              balance, chrono::offset::Local::now(), limit
-            );
-
-            let mut response = response_clone.lock().unwrap();
-            response.body = format!(
-              r#"{{ "total": {}, "data_extrato": {}, "limite": {} }}"#,
-              balance, chrono::offset::Local::now(), limit
-            );
-            response.status = format!("200 OK")
-          },
-          Err(e) => {
-            eprintln!("Failed to retrieve balance for client {}: {}", id_clone, e);
-            let mut response = response_clone.lock().unwrap();
-            response.body = format!(r#"{{ "error": "Failed to retrieve balance for client {}" }}"#, id_clone);
-            response.status = format!("404 Not Found")
-          }
-      }
-  }).join().expect("The thread being joined has panicked");
-
-
-    let response = response.lock().unwrap();
-    handle_response(stream, &response.status, &response.body);
-}
-
 pub fn handle_transaction_request(stream: &mut TcpStream, pg_pool: Pool<PostgresConnectionManager<NoTls>>, client_id: &str, request_body: &str) {
   // let pool = pg_pool.clone();
   // let client_id_clone: String = client_id.to_string();
