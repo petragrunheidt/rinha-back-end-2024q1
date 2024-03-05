@@ -2,8 +2,8 @@ use std::net::TcpStream;
 use std::io::Write;
 use std::thread;
 use std::sync::{Arc, Mutex};
-use r2d2_postgres::{postgres::NoTls, PostgresConnectionManager};
 use r2d2::Pool;
+use r2d2_postgres::{PostgresConnectionManager, postgres::NoTls, r2d2::PooledConnection};
 use serde::{Deserialize, Serialize};
 use serde_json;
 
@@ -60,30 +60,38 @@ pub fn handle_transaction_request(stream: &mut TcpStream, pg_pool: Pool<Postgres
   thread::spawn(move || {
     let mut pg_client = pg_pool.get().unwrap();
 
-    let update_result = pg_client.execute(&update_balance_query(&client_id, &transaction.valor,  &transaction.tipo), &[]);
+    let (status, message) = validate_transaction(&mut pg_client, &get_balance_query(&client_id), &transaction.tipo, &transaction.valor);
 
-    match update_result {
-      Ok(_) => {
-        let register_result = pg_client.execute(&register_transaction_query(&client_id, &transaction.valor, &transaction.tipo, &transaction.descricao), &[]);
-        match register_result {
-          Ok(_) => {
-              let mut response = response_clone.lock().unwrap();
-              response.status = "200 OK".to_string();
-              response.body = "Transaction processed successfully".to_string();
-          }
-          Err(err) => {
-              eprintln!("Error executing registration SQL query: {}", err);
-              let mut response = response_clone.lock().unwrap();
-              response.status = "404 Not Found".to_string();
-              response.body = format!("Error executing registration SQL query: {}", err);
+    if status != "200" {
+      let mut response = response_clone.lock().unwrap();
+      response.status = status;
+      response.body = message;
+    } else {
+      let update_result = pg_client.execute(&update_balance_query(&client_id, &transaction.valor,  &transaction.tipo), &[]);
+
+      match update_result {
+        Ok(_) => {
+          let register_result = pg_client.execute(&register_transaction_query(&client_id, &transaction.valor, &transaction.tipo, &transaction.descricao), &[]);
+          match register_result {
+            Ok(_) => {
+                let mut response = response_clone.lock().unwrap();
+                response.status = "200 OK".to_string();
+                response.body = "Transaction processed successfully".to_string();
+            }
+            Err(err) => {
+                eprintln!("Error executing registration SQL query: {}", err);
+                let mut response = response_clone.lock().unwrap();
+                response.status = "404 Not Found".to_string();
+                response.body = format!("Error executing registration SQL query: {}", err);
+            }
           }
         }
-      }
-      Err(err) => {
-        eprintln!("Error executing update SQL query: {}", err);
-        let mut response = response_clone.lock().unwrap();
-        response.status = "404 Not Found".to_string();
-        response.body = format!("Error executing update SQL query: {}", err);
+        Err(err) => {
+          eprintln!("Error executing update SQL query: {}", err);
+          let mut response = response_clone.lock().unwrap();
+          response.status = "404 Not Found".to_string();
+          response.body = format!("Error executing update SQL query: {}", err);
+        }
       }
     }
   }).join().expect("The thread being joined has panicked");
@@ -96,4 +104,31 @@ fn handle_response(tcp_stream: &mut TcpStream, status: &str, content: &str) {
   let response_http = format!("HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", status, content.len(), content);
   tcp_stream.write_all(response_http.as_bytes()).expect("Failed to write response");
   tcp_stream.flush().expect("Failed to flush");
+}
+
+fn validate_transaction(pg_client: &mut PooledConnection<PostgresConnectionManager<NoTls>>, query: &str, transaction_type: &str, transaction_amount: &i32) -> (String, String) {
+  let row_result = match pg_client.query_one(query, &[]) {
+      Ok(row) => row,
+      Err(_) => return ("404".to_string(), "Account not found".to_string()),
+  };
+  
+  let balance: i32 = match row_result.try_get("amount") {
+      Ok(amount) => amount,
+      Err(_) => return ("500".to_string(), "Failed to retrieve balance".to_string()),
+  };
+
+  let limit_amount: i32 = match row_result.try_get("limit_amount") {
+      Ok(limit) => limit,
+      Err(_) => return ("500".to_string(), "Failed to retrieve limit amount".to_string()),
+  };
+
+  if transaction_type == "d" && limit_amount < (balance - transaction_amount) {
+      return ("422".to_string(), "Insufficient funds for transaction".to_string());
+  }
+
+  if transaction_type == "c" && (limit_amount - transaction_amount) < balance {
+      return ("422".to_string(), "Insufficient funds for transaction".to_string());
+  }
+
+  ("200".to_string(), "Transaction is valid".to_string())
 }
