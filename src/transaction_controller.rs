@@ -59,30 +59,24 @@ pub fn handle_transaction_request(stream: &mut TcpStream, pg_pool: Pool<Postgres
 
   thread::spawn(move || {
     let mut pg_client = pg_pool.get().unwrap();
+    let mut response = response_clone.lock().unwrap();
 
     let (status, message) = validate_transaction(&mut pg_client, &get_balance_query(&client_id), &transaction.tipo, &transaction.valor);
+    response.status = status.clone();
+    response.body = message.clone();
 
-    if status != "200" {
-      let mut response = response_clone.lock().unwrap();
-      response.status = status;
-      response.body = message;
-    } else {
+    if status == "200" {
       let update_result = pg_client.execute(&update_balance_query(&client_id, &transaction.valor,  &transaction.tipo), &[]);
 
       match update_result {
         Ok(_) => {
           let register_result = pg_client.execute(&register_transaction_query(&client_id, &transaction.valor, &transaction.tipo, &transaction.descricao), &[]);
           match register_result {
-            Ok(_) => {
-                let mut response = response_clone.lock().unwrap();
-                response.status = "200 OK".to_string();
-                response.body = "Transaction processed successfully".to_string();
-            }
+            Ok(_) => {}
             Err(err) => {
-                eprintln!("Error executing registration SQL query: {}", err);
-                let mut response = response_clone.lock().unwrap();
-                response.status = "404 Not Found".to_string();
-                response.body = format!("Error executing registration SQL query: {}", err);
+              eprintln!("Error executing registration SQL query: {}", err);
+              response.status = "404 Not Found".to_string();
+              response.body = format!("Error executing registration SQL query: {}", err);
             }
           }
         }
@@ -107,6 +101,8 @@ fn handle_response(tcp_stream: &mut TcpStream, status: &str, content: &str) {
 }
 
 fn validate_transaction(pg_client: &mut PooledConnection<PostgresConnectionManager<NoTls>>, query: &str, transaction_type: &str, transaction_amount: &i32) -> (String, String) {
+  let mut response_body = String::new();
+
   let row_result = match pg_client.query_one(query, &[]) {
       Ok(row) => row,
       Err(_) => return ("404".to_string(), "Account not found".to_string()),
@@ -122,13 +118,21 @@ fn validate_transaction(pg_client: &mut PooledConnection<PostgresConnectionManag
       Err(_) => return ("500".to_string(), "Failed to retrieve limit amount".to_string()),
   };
 
-  if transaction_type == "d" && limit_amount < (balance - transaction_amount) {
+  if transaction_type == "d" {
+    let new_balance = balance - transaction_amount;
+    if limit_amount.abs() < new_balance.abs() {
       return ("422".to_string(), "Insufficient funds for transaction".to_string());
+    }
+    response_body = format!("{{ \"limite\": {}, \"saldo\": {} }}", limit_amount, new_balance);
   }
 
-  if transaction_type == "c" && (limit_amount - transaction_amount) < balance {
+  if transaction_type == "c" {
+    let new_limit = limit_amount - transaction_amount;
+    if new_limit.abs() < balance.abs() {
       return ("422".to_string(), "Insufficient funds for transaction".to_string());
+    }
+    response_body = format!("{{ \"limite\": {}, \"saldo\": {} }}", new_limit, balance);
   }
 
-  ("200".to_string(), "Transaction is valid".to_string())
+  ("200".to_string(), response_body)
 }
