@@ -1,6 +1,5 @@
 use std::net::{TcpListener, TcpStream};
 use std::io::Read;
-use regex::Regex;
 mod pg_pool;
 use pg_pool::create_pg_pool;
 mod extract_controller;
@@ -61,15 +60,31 @@ fn handle_connection(mut stream: TcpStream) {
 }
 
 fn extract_json_from_request(request_str: &str) -> Option<String> {
-  // Define a regular expression pattern to match JSON objects
-  let json_regex = Regex::new(r"\{.*\}").expect("Failed to create regex");
+  let start_index = request_str.find('{');
 
-  // Search for the JSON object in the request body
-  if let Some(mat) = json_regex.find(request_str) {
-      // Extract the matched substring (which contains the JSON data)
-      Some(mat.as_str().to_string())
-  } else {
-      // Return None if no JSON object is found
-      None
+  if let Some(start) = start_index {
+      let mut depth = 1;
+      let mut end_index = None;
+
+      for (index, char) in request_str[start + 1..].char_indices() {
+          match char {
+              '{' => depth += 1,
+              '}' => {
+                  depth -= 1;
+                  if depth == 0 {
+                      end_index = Some(start + index + 1);
+                      break;
+                  }
+              }
+              _ => {}
+          }
+      }
+
+      if let Some(end) = end_index {
+          return Some(request_str[start..=end].to_string());
+      }
   }
+  None
 }
+
+// curl -X POST -H "Content-Type: application/json" -d '{ "valor": 1000, "tipo": "c", "descricao": "descricao" }' localhost:9999/clientes/1/transacoes
